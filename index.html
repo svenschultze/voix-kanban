@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>VOIX Kanban Board</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="styles.css" />
+
+</head>
+<body>
+  <div id="app" v-cloak>
+  <header>
+    <div class="hero">
+      <span class="hero__badge">Workspace · Personal board</span>
+      <h1 class="hero__title">
+        <span class="logo">K</span>
+        VOIX Kanban
+      </h1>
+      <p class="hero__subtitle">
+        Drag &amp; drop tasks, log time, and expose everything to VOIX tools in one seamless board.
+      </p>
+    </div>
+    <div class="profile-card">
+      <div class="profile-avatar">{{ currentUserInitials }}</div>
+      <div class="profile-meta">
+        <strong>{{ currentUser.name }}</strong>
+        <span>{{ currentUser.role }}</span>
+        <span class="status-pill">{{ currentUser.status }}</span>
+      </div>
+      <div class="profile-actions">
+        <span>{{ currentUser.email }}</span>
+        <button type="button" @click="openProfilePanel">View profile</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="board-controls">
+      <form class="new-task-form" @submit.prevent="handleCreateTask">
+        <input
+          type="text"
+          v-model.trim="newTaskTitle"
+          placeholder="Quick add task&hellip;"
+          autocomplete="off"
+          required
+        />
+        <select v-model="newTaskColumn" aria-label="Choose column">
+          <option
+            v-for="col in columns"
+            :key="col.id"
+            :value="col.id"
+          >
+            {{ col.title }}
+          </option>
+        </select>
+        <button type="submit" :disabled="!newTaskTitle.trim()">
+          <span>+</span>
+          <span>Add</span>
+        </button>
+      </form>
+
+      <div class="filter-row">
+        <input
+          type="text"
+          class="search-input"
+          v-model="searchQuery"
+          placeholder="Search by title, description, or comment"
+          aria-label="Search tasks"
+        />
+        <select
+          class="filter-select"
+          v-model="assigneeFilter"
+          aria-label="Filter by assignee"
+        >
+          <option value="">All assignees</option>
+          <option value="__unassigned__">Unassigned</option>
+          <option
+            v-for="person in teammates"
+            :key="person.id"
+            :value="person.id"
+          >
+            {{ person.role ? person.name + ' · ' + person.role : person.name }}
+          </option>
+        </select>
+        <label class="filter-toggle">
+          <input type="checkbox" v-model="showOnlyMine" />
+          <span>Only my tasks</span>
+        </label>
+        <button
+          type="button"
+          class="clear-button"
+          v-if="hasActiveFilters"
+          @click="clearFilters"
+        >
+          Clear filters
+        </button>
+      </div>
+
+      <p class="hint">
+        Logged in as {{ currentUser.name }}. Filters apply to the board, VOIX contexts,
+        and tools so the AI mirrors your view.
+      </p>
+
+      <button type="button" class="clear-button" @click="toggleColumnEditor">
+        {{ columnEditorOpen ? "Hide column editor" : "Customize columns" }}
+      </button>
+      <div v-if="columnEditorOpen" class="column-editor">
+        <div class="column-editor__list">
+          <div
+            class="column-editor__row"
+            v-for="col in columns"
+            :key="col.id"
+            draggable="true"
+            @dragstart="onColumnDragStart(col.id)"
+            @dragend="onColumnDragEnd"
+            @dragover.prevent
+            @drop.prevent="onColumnDrop(col.id)"
+          >
+            <span class="column-editor__handle">⋮⋮</span>
+            <input
+              class="column-editor__input"
+              :value="col.title"
+              @input="renameColumn(col.id, $event.target.value)"
+              aria-label="Column title"
+            />
+            <input
+              type="color"
+              class="column-editor__color"
+              :value="col.color || '#6366f1'"
+              @input="updateColumnColor(col.id, $event.target.value)"
+              aria-label="Column color"
+            />
+            <button
+              type="button"
+              class="column-editor__delete"
+              :disabled="columns.length <= 1"
+              @click="removeColumn(col.id)"
+              aria-label="Delete column"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+        <button type="button" class="column-editor__add" @click="addColumnInteractive">
+          + Add column
+        </button>
+      </div>
+    </section>
+
+    <section class="columns">
+      <div
+        class="column"
+        v-for="col in columns"
+        :key="col.id"
+        :data-column-id="col.id"
+        :class="{ 'drag-over': dragOverColumnId === col.id }"
+        :style="{ '--column-accent': col.color || '#cbd5f5' }"
+        @dragover.prevent="handleColumnDragOver(col.id)"
+        @dragleave="handleColumnDragLeave(col.id, $event)"
+        @drop.prevent="handleColumnDrop(col.id)"
+      >
+        <div class="column-header">
+          <span :style="{ color: col.color || '#1f2937' }">{{ col.title }}</span>
+          <span class="count" :data-count-for="col.id">
+            {{ (visibleTasksByColumn[col.id] || []).length }}
+          </span>
+        </div>
+        <div
+          class="column-body"
+          :class="{
+            empty: !(visibleTasksByColumn[col.id] && visibleTasksByColumn[col.id].length)
+          }"
+          :data-body-for="col.id"
+        >
+          <template
+            v-if="
+              visibleTasksByColumn[col.id] &&
+              visibleTasksByColumn[col.id].length
+            "
+          >
+            <div
+              class="task-card"
+              v-for="task in visibleTasksByColumn[col.id]"
+              :key="task.id"
+              :class="{ 'task-card--selected': isTaskSelected(task.id) }"
+              draggable="true"
+              @dragstart="handleTaskDragStart(task.id)"
+              @dragend="handleTaskDragEnd"
+              @click="onTaskClick($event, task.id)"
+              @contextmenu.prevent="openContextMenu($event, task.id)"
+              @mouseenter="handleTaskMouseEnter(task.id)"
+              @mouseleave="handleTaskMouseLeave"
+            >
+              <div class="task-card-header">
+                <div>
+                  <h4>{{ task.title }}</h4>
+                  <p v-if="task.description">{{ task.description }}</p>
+                </div>
+                <button
+                  type="button"
+                  class="task-card-open"
+                  @click.stop="openTaskModal(task.id)"
+                  aria-label="Open task details"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M14,3V5H17.59L7.76,14.83L9.17,16.24L19,6.41V10H21V3M19,19H5V5H12V3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V12H19V19Z"
+                    />
+                  </svg>
+                </button>
+              </div>
+              <div class="task-card-meta">
+                <span>⏱ {{ formatMinutes(task.totalMinutes || 0) }}</span>
+                <span>💬 {{ (task.comments && task.comments.length) || 0 }}</span>
+                <span class="task-card-assignee">
+                  👤 {{ getAssigneeLabel(task.assigneeId) }}
+                </span>
+              </div>
+            </div>
+          </template>
+          <template v-else>Drop a task here or create a new one.</template>
+        </div>
+      </div>
+    </section>
+  </main>
+
+    <footer>
+      <span>VOIX Kanban &middot; Demo app</span>
+      <span>Contexts mirror board, pointer, modal, and selection state.</span>
+    </footer>
+
+    <task-modal
+      :task="activeModalTask"
+      :visible="Boolean(activeModalTask)"
+      :format-minutes="formatMinutes"
+      :teammates="teammates"
+      @close="closeTaskModal"
+      @update-task="updateTask"
+      @add-time="addTimeEntryFromModal"
+      @add-comment="addCommentFromModal"
+      @delete-task="deleteTaskFromModal"
+      @set-assignee="setAssigneeFromModal"
+    ></task-modal>
+
+    <profile-panel
+      :visible="profileOpen"
+      :current-user="currentUser"
+      :stats="profileStats"
+      :my-tasks="myTasksPreview"
+      :teammates="teammates"
+      :filter-summary="filterSummaryList"
+      @close="closeProfilePanel"
+      @save-profile="updateProfileFromPanel"
+    ></profile-panel>
+
+  <div
+    v-if="contextMenu.open"
+    id="task-context-menu"
+    class="context-menu"
+    :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
+  >
+      <div class="context-menu__section">
+        {{ contextMenu.targetIds.length }} selected
+      </div>
+      <button type="button" class="context-menu__item" @click="openSelectedInModal">
+        <span class="context-menu__item-left">
+          <span class="context-menu__item-icon">↗</span>
+          <span>Open details</span>
+        </span>
+        <small>Enter</small>
+      </button>
+      <button type="button" class="context-menu__item" @click="duplicateSelectedTasks">
+        <span class="context-menu__item-left">
+          <span class="context-menu__item-icon">⧉</span>
+          <span>Duplicate</span>
+        </span>
+      </button>
+      <div
+        class="context-menu__item context-menu__item--with-submenu"
+        @mouseenter="openSubmenu($event, 'move')"
+        @mouseleave="closeSubmenu()"
+      >
+        <span class="context-menu__item-left">
+          <span class="context-menu__item-icon context-menu__item-icon--move">⇄</span>
+          <span>Move to column</span>
+        </span>
+        <small>›</small>
+        <div
+          v-if="contextMenu.submenu === 'move'"
+          class="context-menu context-menu--submenu"
+          style="top: 0; left: 100%;"
+        >
+          <div class="context-menu__section">Columns</div>
+          <button
+            type="button"
+            class="context-menu__item"
+            v-for="col in columns"
+            :key="`move-sub-${col.id}`"
+            @click="moveSelectedToColumn(col.id)"
+          >
+            <span class="context-menu__item-left">
+              <span>{{ col.title }}</span>
+            </span>
+            <small>{{ (visibleTasksByColumn[col.id] || []).length }}</small>
+          </button>
+        </div>
+      </div>
+      <div
+        class="context-menu__item context-menu__item--with-submenu"
+        @mouseenter="openSubmenu($event, 'assign')"
+        @mouseleave="closeSubmenu()"
+      >
+        <span class="context-menu__item-left">
+          <span class="context-menu__item-icon context-menu__item-icon--assign">👤</span>
+          <span>Assign</span>
+        </span>
+        <small>›</small>
+        <div
+          v-if="contextMenu.submenu === 'assign'"
+          class="context-menu context-menu--submenu"
+          style="top: 0; left: 100%;"
+        >
+          <div class="context-menu__section">People</div>
+          <button type="button" class="context-menu__item" @click="assignSelectedTo('current_user')">
+            <span class="context-menu__item-left">
+              <span>Assign to me</span>
+            </span>
+          </button>
+          <button
+            type="button"
+            class="context-menu__item"
+            v-for="person in teammates"
+            :key="`assign-sub-${person.id}`"
+            @click="assignSelectedTo(person.id)"
+          >
+            <span class="context-menu__item-left">
+              <span>{{ person.name }}</span>
+            </span>
+            <small>{{ person.role }}</small>
+          </button>
+        </div>
+      </div>
+      <div class="context-menu__section">Selection</div>
+      <button type="button" class="context-menu__item" @click="clearSelectionAction">
+        <span class="context-menu__item-left">
+          <span class="context-menu__item-icon">✦</span>
+          <span>Clear selection</span>
+        </span>
+      </button>
+      <button
+        type="button"
+        class="context-menu__item context-menu__item--danger"
+        @click="deleteSelectedTasks"
+      >
+        <span class="context-menu__item-left">
+          <span class="context-menu__item-icon context-menu__item-icon--danger">✕</span>
+          <span>Delete</span>
+        </span>
+      </button>
+    </div>
+
+    <voix-toolbelt
+      :create-task="createTask"
+      :update-task="updateTask"
+      :move-task="moveTask"
+      :delete-task="deleteTask"
+      :add-time-entry="addTimeEntryForTask"
+      :add-comment="addCommentForTask"
+      :open-task-modal="openTaskModal"
+      :get-board-state="exportBoardState"
+      :assign-task="assignTaskToMember"
+      :clear-assignee="clearTaskAssignee"
+      :set-filters="setFiltersFromTool"
+      :clear-filters="clearFiltersFromTool"
+      :open-profile="openProfilePanel"
+      :close-profile="closeProfilePanel"
+      :update-profile="updateProfile"
+      :add-column="addColumn"
+      :rename-column="renameColumn"
+      :remove-column="removeColumn"
+      :reorder-column="reorderColumn"
+      :set-column-color="setColumnColor"
+    ></voix-toolbelt>
+
+  <div id="kanban-task-contexts"></div>
+
+  <context name="kanban_columns" id="kanban-columns-context">
+    Column configuration will appear here.
+  </context>
+
+  <context name="kanban_assignments" id="kanban-assignments-context">
+    Assignment context will appear here.
+  </context>
+
+  <context name="kanban_profile" id="kanban-profile-context">
+    Profile context will appear here.
+  </context>
+
+  <context name="kanban_interaction" id="kanban-interaction-context">
+    Interaction context will appear here.
+  </context>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
