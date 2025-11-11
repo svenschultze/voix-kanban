@@ -741,10 +741,16 @@
       max-height: 240px;
       overflow-y: auto;
       position: absolute;
+      top: 0;
+      left: calc(100%);
       border-radius: 0.85rem;
       clip-path: inset(0 round 0.85rem);
       scrollbar-width: thin;
       scrollbar-color: #cbd5f5 transparent;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.12s ease, transform 0.12s ease;
+      transform: translateY(-4px);
     }
 
     .context-menu--submenu::-webkit-scrollbar {
@@ -762,6 +768,13 @@
 
     .context-menu__item--with-submenu {
       position: relative;
+    }
+
+    .context-menu__item--with-submenu:hover > .context-menu--submenu,
+    .context-menu__item--with-submenu:focus-within > .context-menu--submenu {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateY(0);
     }
 
     .context-menu__item-left {

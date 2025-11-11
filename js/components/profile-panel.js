@@ -1,4 +1,8 @@
-import { ref, watch, computed } from "https://unpkg.com/vue@3/dist/vue.esm-browser.js";
+import {
+  ref,
+  watch,
+  computed,
+} from "https://unpkg.com/vue@3/dist/vue.esm-browser.js";
 
 export const ProfilePanel = {
   name: "ProfilePanel",

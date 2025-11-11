@@ -277,19 +277,14 @@
       </button>
       <div
         class="context-menu__item context-menu__item--with-submenu"
-        @mouseenter="openSubmenu($event, 'move')"
-        @mouseleave="closeSubmenu()"
+        tabindex="0"
       >
         <span class="context-menu__item-left">
           <span class="context-menu__item-icon context-menu__item-icon--move">⇄</span>
           <span>Move to column</span>
         </span>
         <small>›</small>
-        <div
-          v-if="contextMenu.submenu === 'move'"
-          class="context-menu context-menu--submenu"
-          style="top: 0; left: 100%;"
-        >
+        <div class="context-menu context-menu--submenu">
           <div class="context-menu__section">Columns</div>
           <button
             type="button"
@@ -307,19 +302,14 @@
       </div>
       <div
         class="context-menu__item context-menu__item--with-submenu"
-        @mouseenter="openSubmenu($event, 'assign')"
-        @mouseleave="closeSubmenu()"
+        tabindex="0"
       >
         <span class="context-menu__item-left">
           <span class="context-menu__item-icon context-menu__item-icon--assign">👤</span>
           <span>Assign</span>
         </span>
         <small>›</small>
-        <div
-          v-if="contextMenu.submenu === 'assign'"
-          class="context-menu context-menu--submenu"
-          style="top: 0; left: 100%;"
-        >
+        <div class="context-menu context-menu--submenu">
           <div class="context-menu__section">People</div>
           <button type="button" class="context-menu__item" @click="assignSelectedTo('current_user')">
             <span class="context-menu__item-left">
@@ -382,23 +372,45 @@
       :set-column-color="setColumnColor"
     ></voix-toolbelt>
 
-  <div id="kanban-task-contexts"></div>
+  <div id="kanban-task-contexts">
+    <context
+      v-for="entry in taskContextEntries"
+      :key="entry.id"
+      :name="entry.name"
+      :data-task-id="entry.taskId"
+    v-text="entry.text"
+  ></context>
+</div>
 
-  <context name="kanban_columns" id="kanban-columns-context">
-    Column configuration will appear here.
-  </context>
+  <context
+    name="kanban_board"
+    id="kanban-board-context"
+    v-text="boardSummaryContextText"
+  ></context>
 
-  <context name="kanban_assignments" id="kanban-assignments-context">
-    Assignment context will appear here.
-  </context>
+  <context
+    name="kanban_columns"
+    id="kanban-columns-context"
+    v-text="columnsContextText"
+  ></context>
 
-  <context name="kanban_profile" id="kanban-profile-context">
-    Profile context will appear here.
-  </context>
+  <context
+    name="kanban_assignments"
+    id="kanban-assignments-context"
+    v-text="assignmentsContextText"
+  ></context>
 
-  <context name="kanban_interaction" id="kanban-interaction-context">
-    Interaction context will appear here.
-  </context>
+  <context
+    name="kanban_profile"
+    id="kanban-profile-context"
+    v-text="profileContextText"
+  ></context>
+
+  <context
+    name="kanban_interaction"
+    id="kanban-interaction-context"
+    v-text="interactionContextText"
+  ></context>
   </div>
 
   <script type="module" src="js/app.js"></script>
