@@ -64,13 +64,14 @@ export const useBoardStore = defineStore("board", () => {
   const selectedTextContent = ref("");
   const draggedTaskIds = ref([]);
   const dragOverColumnId = ref(null);
+  const hoveredColumnId = ref(null);
   const activeModalTaskId = ref(null);
   const searchQuery = ref("");
   const assigneeFilter = ref("");
   const showOnlyMine = ref(false);
   const profileOpen = ref(false);
   const columnEditorOpen = ref(false);
-  const columnDragState = ref({ id: null });
+  const columnDragState = ref({ id: null, overId: null });
 
   const persistState = () => {
     try {
@@ -502,6 +503,10 @@ export const useBoardStore = defineStore("board", () => {
     profileOpen.value = false;
   };
 
+  const setHoveredColumn = (id) => {
+    hoveredColumnId.value = id || null;
+  };
+
   const updateProfile = ({ name, role, email, status }) => {
     if (typeof name === "string" && name.trim()) {
       currentUser.name = name.trim();
@@ -566,6 +571,7 @@ export const useBoardStore = defineStore("board", () => {
     selectedTextContent,
     draggedTaskIds,
     dragOverColumnId,
+    hoveredColumnId,
     activeModalTaskId,
     searchQuery,
     assigneeFilter,
@@ -607,5 +613,6 @@ export const useBoardStore = defineStore("board", () => {
     setFiltersFromTool,
     notifyTasksChanged,
     notifyColumnsChanged,
+    setHoveredColumn,
   };
 });

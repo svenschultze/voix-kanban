@@ -36,6 +36,37 @@
         <span>{{ currentUser.email }}</span>
         <button type="button" @click="openProfilePanel">View profile</button>
       </div>
+      <div class="voix-tools voix-tools--profile" aria-hidden="true">
+        <tool
+          name="open_profile_panel"
+          description="Open the profile panel"
+          @call="handleToolOpenProfile"
+        ></tool>
+        <tool
+          name="close_profile_panel"
+          description="Close the profile panel"
+          @call="handleToolCloseProfile"
+        ></tool>
+        <tool
+          name="update_profile"
+          description="Update the signed-in profile details"
+          @call="handleToolUpdateProfile"
+        >
+          <prop name="name" type="string" description="Full name"></prop>
+          <prop name="role" type="string" description="Role or title"></prop>
+          <prop name="email" type="string" description="Email address"></prop>
+          <prop name="status" type="string" description="Status message"></prop>
+        </tool>
+      </div>
+      <context
+        name="user_profile"
+      >
+        <template>Signed in as {{ currentUser.name + " (" + currentUser.role + ")" + "\n" }}</template>
+        <template>Status: {{ currentUser.status + "\n" }}</template>
+        <template>Email: {{ currentUser.email + "\n" }}</template>
+        <template>My open tasks: {{ myOpenTasksCount + "\n" }}</template>
+        <template>My completed tasks: {{ myCompletedTasksCount + "\n" }}</template>
+      </context>
     </div>
   </header>
 
@@ -100,135 +131,484 @@
           Clear filters
         </button>
       </div>
+      <tool
+        name="set_filters"
+        description="Apply kanban board filters"
+        @call="handleToolSetFilters"
+      >
+        <prop
+          name="searchQuery"
+          type="string"
+          description="Search text for title, description, or comments"
+        ></prop>
+        <prop
+          name="assigneeId"
+          type="string"
+          description="Teammate ID, '__unassigned__', or blank for all"
+        ></prop>
+        <prop
+          name="showOnlyMine"
+          type="boolean"
+          description="true to show only current user's tasks"
+        ></prop>
+      </tool>
+      <tool
+        name="clear_filters"
+        description="Reset all kanban filters"
+        @call="handleToolClearFilters"
+      ></tool>
+      <tool
+        name="add_column"
+        description="Add a new column to the board"
+        return
+        @call="handleToolAddColumn"
+      >
+        <prop name="title" type="string" description="Column title"></prop>
+        <prop name="color" type="string" description="Hex color like #6366F1"></prop>
+        <prop
+          name="position"
+          type="number"
+          description="Zero-based index for column placement"
+        ></prop>
+      </tool>
 
-      <p class="hint">
-        Logged in as {{ currentUser.name }}. Filters apply to the board, VOIX contexts,
-        and tools so the AI mirrors your view.
-      </p>
+      <tool
+        name="rename_column"
+        description="Rename an existing column"
+        @call="handleToolRenameColumn"
+      >
+        <prop name="id" type="string" description="Column ID" required></prop>
+        <prop name="title" type="string" description="New title" required></prop>
+      </tool>
 
-      <button type="button" class="clear-button" @click="toggleColumnEditor">
-        {{ columnEditorOpen ? "Hide column editor" : "Customize columns" }}
-      </button>
-      <div v-if="columnEditorOpen" class="column-editor">
-        <div class="column-editor__list">
-          <div
-            class="column-editor__row"
-            v-for="col in columns"
-            :key="col.id"
-            draggable="true"
-            @dragstart="onColumnDragStart(col.id)"
-            @dragend="onColumnDragEnd"
-            @dragover.prevent
-            @drop.prevent="onColumnDrop(col.id)"
+      <tool
+        name="remove_column"
+        description="Delete a column and reassign its tasks"
+        @call="handleToolRemoveColumn"
+      >
+        <prop name="id" type="string" description="Column ID" required></prop>
+      </tool>
+
+      <tool
+        name="reorder_column"
+        description="Move a column to a new position"
+        @call="handleToolReorderColumn"
+      >
+        <prop name="id" type="string" description="Column ID" required></prop>
+        <prop
+          name="position"
+          type="number"
+          description="Zero-based destination index"
+          required
+        ></prop>
+      </tool>
+
+      <tool
+        name="set_column_color"
+        description="Update a column accent color"
+        @call="handleToolSetColumnColor"
+      >
+        <prop name="id" type="string" description="Column ID" required></prop>
+        <prop name="color" type="string" description="Hex color code" required></prop>
+      </tool>
+
+      <context
+        name="kanban_board"
+        id="kanban-board-context"
+      >
+        <template>Kanban board summary{{ "\n" }}</template>
+        <template>Active filters:
+          {{
+            (filterSummaryList.length
+              ? filterSummaryList.join(", ")
+              : "none") + "\n"
+          }}
+        </template>
+        <template>Total logged time: {{ formatMinutes(totalTimeLogged) + "\n" }}</template>
+        <template>Tasks on board: {{ tasks.length + "\n" }}</template>
+        <template>Visible tasks after filters: {{ filteredTasksCount + "\n" }}</template>
+      </context>
+      <div class="voix-tools voix-tools--board" aria-hidden="true">
+        <tool
+          name="get_board_state"
+          description="Return current columns, tasks and interaction state"
+          return
+          @call="handleToolGetBoardState"
+        ></tool>
+      </div>
+      <context
+        name="kanban_assignments"
+        id="kanban-assignments-context"
+      >
+        <template>Assignments overview{{ "\n" }}</template>
+        <template>Unassigned tasks: {{ tasks.filter((task) => !task.assigneeId).length + "\n" }}</template>
+        <template v-for="person in teammates" :key="`assign-summary-${person.id}`">
+          - {{
+            person.name + " (" + (person.role || "No role") + ") - " +
+            tasks.filter((task) => task.assigneeId === person.id).length + " task(s)\n"
+          }}
+        </template>
+      </context>
+    </section>
+
+    <section class="columns" :class="{ 'columns--editing': columnEditorOpen }">
+
+      <context
+        name="user_interaction"
+        id="kanban-interaction-context"
+        v-if="hoveredTaskId || dragOverColumnId || columnHoverId || selectedTaskIds.length || activeModalTask || textSelectionActive"
+      >
+        Interaction state. When the user gives deictic prompts like "this task",
+        use the hover/selection/modal info below{{ "\n" }}
+        <template v-if="hoveredTaskId">
+          The user is hovering over task: {{ hoveredTaskId + "\n"}}
+        </template>
+        <template v-if="dragOverColumnId">
+          The user is currently dragging {{ hoveredTaskId }} over this column:
+          {{
+            ((columns.find((col) => col.id === dragOverColumnId) || {}).title ||
+              dragOverColumnId) + " (" + dragOverColumnId + ")\n"
+          }}
+        </template>
+        <template v-if="columnHoverId">
+          The user is hovering over column:
+          {{
+            ((columns.find((col) => col.id === columnHoverId) || {}).title ||
+              columnHoverId) + " (" + columnHoverId + ")\n"
+          }}
+        </template>
+        <template v-if="selectedTaskIds.length">
+          Selected tasks:{{"\n"}}
+          <template v-for="taskId in selectedTaskIds">
+            - {{taskId + "\n"}}
+          </template>
+        </template>
+        <template v-if="activeModalTask">
+          Task detail modal open for task {{activeModalTask.id + "\n"}}
+        </template>
+        <template v-if="textSelectionActive">
+          Text selected: "{{(selectedTextContent || "").replace(/\s+/g, " ").trim()}}"
+        </template>
+      </context>
+      <tool
+        name="create_task"
+        description="Create a new kanban task"
+        @call="handleToolCreateTask"
+      >
+        <prop name="title" type="string" required></prop>
+        <prop name="description" type="string"></prop>
+        <prop
+          name="columnId"
+          type="string"
+          description="Column ID: todo | in-progress | done"
+          required
+        ></prop>
+      </tool>
+
+      <tool
+        name="update_task"
+        description="Update an existing kanban task"
+        @call="handleToolUpdateTask"
+      >
+        <prop name="id" type="string" required></prop>
+        <prop name="title" type="string"></prop>
+        <prop name="description" type="string"></prop>
+        <prop
+          name="columnId"
+          type="string"
+          description="Optional new column ID"
+        ></prop>
+      </tool>
+
+      <tool
+        name="move_task"
+        description="Move a task to another column and position"
+        @call="handleToolMoveTask"
+      >
+        <prop name="id" type="string" required></prop>
+        <prop
+          name="toColumnId"
+          type="string"
+          description="Target column ID"
+          required
+        ></prop>
+        <prop
+          name="position"
+          type="number"
+          description="Zero-based index in target column (optional)"
+        ></prop>
+      </tool>
+
+      <tool
+        name="delete_task"
+        description="Delete a task from the board"
+        @call="handleToolDeleteTask"
+      >
+        <prop name="id" type="string" required></prop>
+      </tool>
+
+      <tool
+        name="open_task_modal"
+        description="Open the detail modal for a task"
+        @call="handleToolOpenTaskModal"
+      >
+        <prop name="id" type="string" description="Task ID" required></prop>
+      </tool>
+
+      <tool
+        name="add_time_entry"
+        description="Log time for a task"
+        @call="handleToolAddTimeEntry"
+      >
+        <prop name="taskId" type="string" description="Task ID" required></prop>
+        <prop
+          name="minutes"
+          type="number"
+          description="Minutes to log (positive integer)"
+          required
+        ></prop>
+        <prop name="note" type="string" description="Optional note"></prop>
+      </tool>
+
+      <tool
+        name="add_comment"
+        description="Add a comment to a task"
+        @call="handleToolAddComment"
+      >
+        <prop name="taskId" type="string" description="Task ID" required></prop>
+        <prop name="text" type="string" description="Comment text" required></prop>
+      </tool>
+
+      <tool
+        name="assign_task"
+        description="Assign a task to a teammate"
+        @call="handleToolAssignTask"
+      >
+        <prop name="id" type="string" description="Task ID" required></prop>
+        <prop
+          name="assigneeId"
+          type="string"
+          description="Teammate ID (e.g., ava, leo, mia, noor)"
+          required
+        ></prop>
+      </tool>
+
+      <tool
+        name="unassign_task"
+        description="Remove any assignee from a task"
+        @call="handleToolUnassignTask"
+      >
+        <prop name="id" type="string" description="Task ID" required></prop>
+      </tool>
+      <div class="columns-toolbar">
+        <div class="columns-toolbar__controls">
+          <button type="button" class="column-editor-toggle" @click="toggleColumnEditor">
+            {{ columnEditorOpen ? "Done" : "Customize columns" }}
+          </button>
+          <form
+            v-if="columnEditorOpen"
+            class="column-add-inline"
+            @submit.prevent="addColumnFromEditor"
           >
-            <span class="column-editor__handle">⋮⋮</span>
             <input
-              class="column-editor__input"
-              :value="col.title"
-              @input="renameColumn(col.id, $event.target.value)"
-              aria-label="Column title"
+              type="text"
+              class="column-add-inline__title"
+              v-model.trim="newColumnTitle"
+              placeholder="Add column"
+              aria-label="New column title"
+              required
             />
             <input
               type="color"
-              class="column-editor__color"
-              :value="col.color || '#6366f1'"
-              @input="updateColumnColor(col.id, $event.target.value)"
-              aria-label="Column color"
+              class="column-add-inline__color"
+              v-model="newColumnColor"
+              aria-label="New column color"
             />
-            <button
-              type="button"
-              class="column-editor__delete"
-              :disabled="columns.length <= 1"
-              @click="removeColumn(col.id)"
-              aria-label="Delete column"
-            >
-              ×
+            <button type="submit" class="column-add-inline__submit">
+              +
             </button>
-          </div>
+          </form>
         </div>
-        <button type="button" class="column-editor__add" @click="addColumnInteractive">
-          + Add column
-        </button>
+        <p class="columns-toolbar__hint">
+          {{
+            columnEditorOpen
+              ? "Drag handles to reorder or tweak columns, then add new ones right here."
+              : "Need another stage? Customize the columns any time."
+          }}
+        </p>
       </div>
-    </section>
 
-    <section class="columns">
-      <div
-        class="column"
-        v-for="col in columns"
-        :key="col.id"
-        :data-column-id="col.id"
-        :class="{ 'drag-over': dragOverColumnId === col.id }"
-        :style="{ '--column-accent': col.color || '#cbd5f5' }"
-        @dragover.prevent="handleColumnDragOver(col.id)"
-        @dragleave="handleColumnDragLeave(col.id, $event)"
-        @drop.prevent="handleColumnDrop(col.id)"
-      >
-        <div class="column-header">
-          <span :style="{ color: col.color || '#1f2937' }">{{ col.title }}</span>
-          <span class="count" :data-count-for="col.id">
-            {{ (visibleTasksByColumn[col.id] || []).length }}
-          </span>
-        </div>
+      <div class="columns-grid">
         <div
-          class="column-body"
+          class="column"
+          v-for="col in columns"
+          :key="col.id"
+          :data-column-id="col.id"
           :class="{
-            empty: !(visibleTasksByColumn[col.id] && visibleTasksByColumn[col.id].length)
+            'drag-over': !columnEditorOpen && dragOverColumnId === col.id,
+            'column--reorder-target': columnEditorOpen && columnDragState.overId === col.id
           }"
-          :data-body-for="col.id"
-        >
-          <template
-            v-if="
-              visibleTasksByColumn[col.id] &&
-              visibleTasksByColumn[col.id].length
-            "
+        :style="{ '--column-accent': col.color || '#cbd5f5' }"
+        @dragover.prevent="columnEditorOpen ? onColumnDragHover(col.id) : handleColumnDragOver(col.id)"
+        @dragleave="columnEditorOpen ? onColumnDragLeaveEditor(col.id) : handleColumnDragLeave(col.id, $event)"
+        @drop.prevent="columnEditorOpen ? onColumnDrop(col.id) : handleColumnDrop(col.id)"
+        @mouseenter="setHoveredColumn(col.id)"
+        @mouseleave="setHoveredColumn(null)"
+      >
+          <div
+            class="column-header"
+            :class="{ 'column-header--editing': columnEditorOpen }"
           >
-            <div
-              class="task-card"
-              v-for="task in visibleTasksByColumn[col.id]"
-              :key="task.id"
-              :class="{ 'task-card--selected': isTaskSelected(task.id) }"
-              draggable="true"
-              @dragstart="handleTaskDragStart(task.id)"
-              @dragend="handleTaskDragEnd"
-              @click="onTaskClick($event, task.id)"
-              @contextmenu.prevent="openContextMenu($event, task.id)"
-              @mouseenter="handleTaskMouseEnter(task.id)"
-              @mouseleave="handleTaskMouseLeave"
-            >
-              <div class="task-card-header">
-                <div>
-                  <h4>{{ task.title }}</h4>
-                  <p v-if="task.description">{{ task.description }}</p>
-                </div>
+            <template v-if="columnEditorOpen">
+              <div class="column-editor-title-wrap">
+                <span
+                  class="column-editor-handle"
+                  draggable="true"
+                  @dragstart="onColumnDragStart(col.id)"
+                  @dragend="onColumnDragEnd"
+                >
+                  ⋮⋮
+                </span>
+                <input
+                  class="column-editor-title"
+                  :value="col.title"
+                  @input="renameColumn(col.id, $event.target.value)"
+                  aria-label="Column title"
+                />
+                <label class="column-editor-color-picker">
+                  <span class="sr-only">Column color</span>
+                  <input
+                    type="color"
+                    class="column-editor-color"
+                    :value="col.color || '#6366f1'"
+                    @input="updateColumnColor(col.id, $event.target.value)"
+                    aria-label="Column color"
+                  />
+                </label>
                 <button
                   type="button"
-                  class="task-card-open"
-                  @click.stop="openTaskModal(task.id)"
-                  aria-label="Open task details"
+                  class="column-editor-delete"
+                  :disabled="columns.length <= 1"
+                  @click="removeColumn(col.id)"
+                  aria-label="Delete column"
                 >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      d="M14,3V5H17.59L7.76,14.83L9.17,16.24L19,6.41V10H21V3M19,19H5V5H12V3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V12H19V19Z"
-                    />
-                  </svg>
+                  ×
                 </button>
               </div>
-              <div class="task-card-meta">
-                <span>⏱ {{ formatMinutes(task.totalMinutes || 0) }}</span>
-                <span>💬 {{ (task.comments && task.comments.length) || 0 }}</span>
-                <span class="task-card-assignee">
-                  👤 {{ getAssigneeLabel(task.assigneeId) }}
-                </span>
+            </template>
+            <template v-else>
+              <span :style="{ color: col.color || '#1f2937' }">{{ col.title }}</span>
+              <span class="count" :data-count-for="col.id">
+                {{ (visibleTasksByColumn[col.id] || []).length }}
+              </span>
+            </template>
+          </div>
+          <context
+            :name="`column_${col.id}`"
+            :data-column-id="col.id"
+          >
+            <template>Column ID: {{ col.id + "\n" }}</template>
+            <template>Title: {{ col.title + "\n" }}</template>
+            <template>Color: {{ (col.color || "default") + "\n" }}</template>
+            <template>Tasks in column:
+              {{
+                tasks.filter((task) => task.columnId === col.id).length + "\n"
+              }}
+            </template>
+            <template>Visible after filters:
+              {{ (visibleTasksByColumn[col.id] || []).length + "\n" }}
+            </template>
+          </context>
+          <div
+            class="column-body"
+            :class="{
+              empty: !(visibleTasksByColumn[col.id] && visibleTasksByColumn[col.id].length)
+            }"
+            :data-body-for="col.id"
+          >
+            <template
+              v-if="
+                visibleTasksByColumn[col.id] &&
+                visibleTasksByColumn[col.id].length
+              "
+            >
+              <div
+                class="task-card"
+                v-for="task in visibleTasksByColumn[col.id]"
+                :key="task.id"
+                :class="{ 'task-card--selected': isTaskSelected(task.id) }"
+                :draggable="!columnEditorOpen"
+                @dragstart="handleTaskDragStart(task.id)"
+                @dragend="handleTaskDragEnd"
+                @click="onTaskClick($event, task.id)"
+                @contextmenu.prevent="openContextMenu($event, task.id)"
+                @mouseenter="handleTaskMouseEnter(task.id)"
+                @mouseleave="handleTaskMouseLeave"
+              >
+                <div class="task-card-header">
+                  <div>
+                    <h4>{{ task.title }}</h4>
+                    <p v-if="task.description">{{ task.description }}</p>
+                  </div>
+                  <button
+                    type="button"
+                    class="task-card-open"
+                    @click.stop="openTaskModal(task.id)"
+                    aria-label="Open task details"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path
+                        d="M14,3V5H17.59L7.76,14.83L9.17,16.24L19,6.41V10H21V3M19,19H5V5H12V3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V12H19V19Z"
+                      />
+                    </svg>
+                  </button>
+                </div>
+                <div class="task-card-meta">
+                  <span>⏱ {{ formatMinutes(task.totalMinutes || 0) }}</span>
+                  <span>💬 {{ (task.comments && task.comments.length) || 0 }}</span>
+                  <span class="task-card-assignee">
+                    👤 {{ getAssigneeLabel(task.assigneeId) }}
+                  </span>
+                </div>
+                <context
+                  :name="`task_${task.id}`"
+                  :data-task-id="task.id"
+                >
+                  <template>Task ID: {{ task.id + "\n" }}</template>
+                  <template>Title: {{ task.title + "\n" }}</template>
+                  <template>Description: {{ (task.description || "No description provided.") + "\n" }}</template>
+                  <template>Column: {{ col.title + "\n" }}</template>
+                  <template>Assignee: {{ getAssigneeLabel(task.assigneeId) + "\n" }}</template>
+                  <template v-if="task.timeEntries && task.timeEntries.length">
+                    <template>Time entries: {{ "\n" }}</template>
+                    <template
+                      v-for="(entry, entryIndex) in task.timeEntries"
+                      :key="`task_${task.id}_time_${entryIndex}`"
+                    >
+                      {{ (entryIndex + 1) + ". " + formatMinutes(entry.minutes) + " — " + (entry.note || "No note") + " @ " + new Date(entry.createdAt).toLocaleString() + "\n" }}
+                    </template>
+                  </template>
+                  <template v-else>Time entries: {{ "none\n" }}</template>
+                  <template v-if="task.comments && task.comments.length">
+                    <template>Comments: {{ "\n" }}</template>
+                    <template
+                      v-for="(comment, commentIndex) in task.comments"
+                      :key="`task_${task.id}_comment_${commentIndex}`"
+                    >
+                      {{ (commentIndex + 1) + ". \"" + comment.text + "\" @ " + new Date(comment.createdAt).toLocaleString() + "\n" }}
+                    </template>
+                  </template>
+                  <template v-else>Comments: {{ "none\n" }}</template>
+                </context>
               </div>
-            </div>
-          </template>
-          <template v-else>Drop a task here or create a new one.</template>
+            </template>
+            <template v-else>Drop a task here or create a new one.</template>
+          </div>
         </div>
+
       </div>
     </section>
   </main>
-
     <footer>
       <span>VOIX Kanban &middot; Demo app</span>
       <span>Contexts mirror board, pointer, modal, and selection state.</span>
@@ -354,68 +734,6 @@
       </button>
     </div>
 
-    <voix-toolbelt
-      :create-task="createTask"
-      :update-task="updateTask"
-      :move-task="moveTask"
-      :delete-task="deleteTask"
-      :add-time-entry="addTimeEntryForTask"
-      :add-comment="addCommentForTask"
-      :open-task-modal="openTaskModal"
-      :get-board-state="exportBoardState"
-      :assign-task="assignTaskToMember"
-      :clear-assignee="clearTaskAssignee"
-      :set-filters="setFiltersFromTool"
-      :clear-filters="clearFiltersFromTool"
-      :open-profile="openProfilePanel"
-      :close-profile="closeProfilePanel"
-      :update-profile="updateProfile"
-      :add-column="addColumn"
-      :rename-column="renameColumn"
-      :remove-column="removeColumn"
-      :reorder-column="reorderColumn"
-      :set-column-color="setColumnColor"
-    ></voix-toolbelt>
-
-  <div id="kanban-task-contexts">
-    <context
-      v-for="entry in taskContextEntries"
-      :key="entry.id"
-      :name="entry.name"
-      :data-task-id="entry.taskId"
-    v-text="entry.text"
-  ></context>
-</div>
-
-  <context
-    name="kanban_board"
-    id="kanban-board-context"
-    v-text="boardSummaryContextText"
-  ></context>
-
-  <context
-    name="kanban_columns"
-    id="kanban-columns-context"
-    v-text="columnsContextText"
-  ></context>
-
-  <context
-    name="kanban_assignments"
-    id="kanban-assignments-context"
-    v-text="assignmentsContextText"
-  ></context>
-
-  <context
-    name="kanban_profile"
-    id="kanban-profile-context"
-    v-text="profileContextText"
-  ></context>
-
-  <context
-    name="kanban_interaction"
-    id="kanban-interaction-context"
-    v-text="interactionContextText"
-  ></context>
   </div>
 
   <script type="module" src="js/app.js"></script>

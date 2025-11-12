@@ -10,7 +10,7 @@ VOIX Kanban is a single-page demo workspace that showcases how a Vue 3 UI can ex
 - Board-level filters: global search (title, description, comments), assignee dropdown, “only my tasks” toggle, and reset button—filters also cascade to all exported VOIX contexts.
 - Profile side panel that surfaces personal stats, lets you edit the signed-in user, and echoes applied filters and roster data.
 - Persistent state using `localStorage` (`voix-kanban-state`) so columns, tasks, and profile edits survive refreshes.
-- `<context>` exports for columns, assignments, profile, and interaction state, plus a `<voix-toolbelt>` component that registers create/update/move/delete/time/comment/filter/profile/column operations for VOIX automation.
+- `<context>` exports for columns, assignments, profile, and interaction state, plus an inline `<tool>` belt (inside `index.html`) that registers create/update/move/delete/time/comment/filter/profile/column operations for VOIX automation.
 
 ## Tech Stack
 
@@ -23,7 +23,7 @@ VOIX Kanban is a single-page demo workspace that showcases how a Vue 3 UI can ex
 ## Project Structure
 
 ```
-├── index.html          # Root markup + Vue app mount + context placeholders
+├── index.html          # Root markup + Vue app mount + context/tool placeholders
 ├── styles.css          # Global styles, layout, modal/panel styles
 └── js
     ├── app.js          # Main Vue app: state, filters, drag/drop, persistence
@@ -31,8 +31,7 @@ VOIX Kanban is a single-page demo workspace that showcases how a Vue 3 UI can ex
     ├── helpers.js      # Small utilities (cloning, IDs, time formatting)
     └── components
         ├── task-modal.js      # Task detail editor/logging modal
-        ├── profile-panel.js   # Profile side panel & stats
-        └── voix-toolbelt.js   # Registers VOIX tool endpoints
+        └── profile-panel.js   # Profile side panel & stats
 ```
 
 ## Getting Started
@@ -64,7 +63,7 @@ VOIX Kanban is a single-page demo workspace that showcases how a Vue 3 UI can ex
 ## Development Notes
 
 - The app intentionally avoids a build step; all Vue APIs come from `https://unpkg.com/vue@3/dist/vue.esm-browser.js`.
-- `voix-toolbelt.js` registers DOM `<tool>` elements; each dispatches `call` events that the component routes to the exposed methods (`createTask`, `moveTask`, etc.). Tools that return data (e.g., `get_board_state`, `add_column`) emit a `CustomEvent("return", { detail })`.
+- The inline `<tool>` belt in `index.html` registers VOIX endpoints; each `<tool>` dispatches `call` events that the root Vue app handles (`createTask`, `moveTask`, etc.). Tools that return data (e.g., `get_board_state`, `add_column`) emit a `CustomEvent("return", { detail })`.
 - Context blocks (`<context name="kanban_columns">`, etc.) are populated via helper functions in `app.js`, so downstream VOIX clients can stay in sync with columns, assignments, profile info, and interaction events.
 - `helpers.js` hosts cloning/ID/time utilities; `data.js` centralizes anything a contributor might tweak (column presets, teammates, starter tasks).
 - Because everything runs in-browser, testing is manual. You can add lightweight unit checks by importing Vue’s reactivity helpers into a test harness or by slicing logic into pure utility modules.

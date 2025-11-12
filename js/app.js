@@ -6,7 +6,6 @@
       watch,
       onMounted,
       onBeforeUnmount,
-      nextTick,
     } from "https://unpkg.com/vue@3/dist/vue.esm-browser.js";
     import {
       createPinia,
@@ -16,13 +15,12 @@
     import { cloneTasks, formatMinutes, makeId } from "./helpers.js";
     import { ProfilePanel } from "./components/profile-panel.js";
     import { TaskModal } from "./components/task-modal.js";
-    import { VoixToolbelt } from "./components/voix-toolbelt.js";
     import { useBoardStore } from "./stores/board.js";
 
     const pinia = createPinia();
 
     const app = createApp({
-      components: { TaskModal, ProfilePanel, VoixToolbelt },
+      components: { TaskModal, ProfilePanel },
       setup() {
         const boardStore = useBoardStore();
         const {
@@ -38,6 +36,7 @@
           selectedTextContent,
           draggedTaskIds,
           dragOverColumnId,
+          hoveredColumnId: columnHoverId,
           activeModalTaskId,
           searchQuery,
           assigneeFilter,
@@ -51,12 +50,20 @@
 
         const newTaskTitle = ref("");
         const newTaskColumn = ref(columns.value[0]?.id || "todo");
+        const defaultColumnColor = "#6366f1";
+        const newColumnTitle = ref("");
+        const newColumnColor = ref(defaultColumnColor);
         const contextMenu = reactive({
           open: false,
           x: 0,
           y: 0,
           targetIds: [],
         });
+
+        const resetNewColumnForm = () => {
+          newColumnTitle.value = "";
+          newColumnColor.value = defaultColumnColor;
+        };
 
         watch(
           columns,
@@ -91,12 +98,13 @@
         const clearTaskAssignee = (payload) =>
           boardStore.clearTaskAssignee(payload);
         const updateProfile = (payload) => boardStore.updateProfile(payload);
-        const openProfilePanel = () => {boardStore.openProfilePanel();}
+        const openProfilePanel = () => {
+          boardStore.openProfilePanel();
+        };
         const closeProfilePanel = () => boardStore.closeProfilePanel();
         const clearFilters = () => boardStore.clearFilters();
         const setFiltersFromTool = (payload) =>
           boardStore.setFiltersFromTool(payload);
-        const clearFiltersFromTool = () => boardStore.clearFilters();
 
         const matchesFilters = (task) => {
           if (showOnlyMine.value && task.assigneeId !== currentUser.value.id) {
@@ -232,31 +240,59 @@
           }
         };
 
-        const addColumnInteractive = () => {
-          addColumn();
+        const addColumnFromEditor = () => {
+          const title = newColumnTitle.value.trim();
+          if (!title) return;
+          addColumn({ title, color: newColumnColor.value });
+          resetNewColumnForm();
+        };
+
+        const clearColumnDragState = () => {
+          columnDragState.value = { id: null, overId: null };
         };
 
         const onColumnDragStart = (id) => {
-          columnDragState.value.id = id;
+          columnDragState.value = { ...columnDragState.value, id };
         };
 
         const onColumnDragEnd = () => {
-          columnDragState.value.id = null;
+          clearColumnDragState();
+        };
+
+        const onColumnDragHover = (id) => {
+          columnDragState.value = { ...columnDragState.value, overId: id };
+        };
+
+        const onColumnDragLeaveEditor = (id) => {
+          if (columnDragState.value.overId === id) {
+            columnDragState.value = { ...columnDragState.value, overId: null };
+          }
         };
 
         const onColumnDrop = (targetId) => {
           const sourceId = columnDragState.value.id;
-          if (!sourceId || sourceId === targetId) return;
+          if (!sourceId || sourceId === targetId) {
+            clearColumnDragState();
+            return;
+          }
           const targetIndex = columns.value.findIndex(
             (col) => col.id === targetId
           );
-          if (targetIndex === -1) return;
+          if (targetIndex === -1) {
+            clearColumnDragState();
+            return;
+          }
           reorderColumn(sourceId, targetIndex);
-          columnDragState.value.id = null;
+          clearColumnDragState();
         };
 
         const toggleColumnEditor = () => {
           columnEditorOpen.value = !columnEditorOpen.value;
+          resetNewColumnForm();
+          clearColumnDragState();
+          dragOverColumnId.value = null;
+          draggedTaskIds.value = [];
+          setHoveredColumn(null);
         };
 
         const isTaskSelected = (id) => selectedTaskIds.value.includes(id);
@@ -304,180 +340,6 @@
         const activeModalTask = computed(
           () => tasks.value.find((task) => task.id === activeModalTaskId.value) || null
         );
-
-        const taskContextEntries = computed(() =>
-          tasks.value.map((task) => {
-            const assignee = getAssigneeLabel(task.assigneeId);
-            const timeEntries = Array.isArray(task.timeEntries)
-              ? task.timeEntries
-              : [];
-            const comments = Array.isArray(task.comments) ? task.comments : [];
-            const columnInfo = columns.value.find(
-              (col) => col.id === task.columnId
-            );
-            const lines = [];
-            lines.push(`Task ID: ${task.id}`);
-            lines.push(`Title: ${task.title}`);
-            lines.push(
-              `Description: ${task.description || "No description provided."}`
-            );
-            lines.push(`Column: ${columnInfo ? columnInfo.title : task.columnId}`);
-            lines.push(`Assignee: ${assignee}`);
-            if (timeEntries.length) {
-              lines.push("Time entries:");
-              timeEntries.forEach((entry, index) => {
-                lines.push(
-                  `  ${index + 1}. ${formatMinutes(entry.minutes)} — ${
-                    entry.note || "No note"
-                  } @ ${new Date(entry.createdAt).toLocaleString()}`
-                );
-              });
-            } else {
-              lines.push("Time entries: none");
-            }
-            if (comments.length) {
-              lines.push("Comments:");
-              comments.forEach((comment, index) => {
-                lines.push(
-                  `  ${index + 1}. "${comment.text}" @ ${new Date(
-                    comment.createdAt
-                  ).toLocaleString()}`
-                );
-              });
-            } else {
-              lines.push("Comments: none");
-            }
-            return {
-              id: task.id,
-              name: `task_${task.id}`,
-              taskId: task.id,
-              text: lines.join("\n"),
-            };
-          })
-        );
-
-        const columnsContextText = computed(() => {
-          const lines = [];
-          lines.push("Columns configuration");
-          const filterParts = buildFilterSummary();
-          lines.push(
-            `Active filters: ${
-              filterParts.length ? filterParts.join(", ") : "none"
-            }`
-          );
-          columns.value.forEach((col, index) => {
-            const count = tasks.value.filter(
-              (task) => task.columnId === col.id
-            ).length;
-            lines.push(
-              `${index + 1}. [${col.id}] "${col.title}" – Tasks: ${count}; Color: ${
-                col.color || "default"
-              }`
-            );
-          });
-          return lines.join("\n");
-        });
-
-        const assignmentsContextText = computed(() => {
-          const lines = [];
-          lines.push("Assignments overview");
-          lines.push("");
-          lines.push(
-            `Current user: ${currentUser.value.name} (${currentUser.value.role})`
-          );
-          lines.push("");
-          teammates.value.forEach((member) => {
-            const memberTasks = tasks.value.filter(
-              (task) => task.assigneeId === member.id
-            );
-            lines.push(
-              `- ${member.name} (${member.role}) - ${memberTasks.length} task(s)`
-            );
-            memberTasks.forEach((task) => {
-              lines.push(
-                `  - ${task.title} [${task.id}] in column "${task.columnId}"`
-              );
-            });
-            lines.push("");
-          });
-          const unassigned = tasks.value.filter((task) => !task.assigneeId);
-          lines.push(`Unassigned tasks (${unassigned.length}):`);
-          unassigned.forEach((task) => {
-            lines.push(`  - ${task.title} [${task.id}]`);
-          });
-          return lines.join("\n");
-        });
-
-        const interactionContextText = computed(() => {
-          const hovered =
-            hoveredTaskId.value == null
-              ? "none"
-              : `task with id "${hoveredTaskId.value}"`;
-          const selectedCount = selectedTaskIds.value.length;
-          let selectedDescription = "none";
-          if (selectedCount === 1) {
-            selectedDescription = `task with id "${selectedTaskIds.value[0]}"`;
-          } else if (selectedCount > 1) {
-            selectedDescription = `${selectedCount} tasks (${selectedTaskIds.value.join(
-              ", "
-            )})`;
-          }
-          const modalState = activeModalTaskId.value
-            ? `open for task "${activeModalTaskId.value}"`
-            : "closed";
-          const selectionText = textSelectionActive.value
-            ? selectedTextContent.value.replace(/\s+/g, " ").trim()
-            : "";
-          const selection = textSelectionActive.value
-            ? `yes - "${selectionText}"`
-            : "no";
-
-          const lines = [];
-          lines.push(
-            "Interaction state. When the user asks for deictic prompts, use this info to understand them. I.e. if the user says 'this task' while selecting or hoving over a task, refer to that task."
-          );
-          lines.push("");
-          lines.push(
-            `Mouse hovering over task: ${hoveredTaskId.value ? "yes" : "no"} (${hovered})`
-          );
-          lines.push(`Selected tasks: ${selectedDescription}`);
-          lines.push(`Task detail modal: ${modalState}`);
-          lines.push(`Any text selected in page: ${selection}`);
-          return lines.join("\n");
-        });
-
-        const profileContextText = computed(() => {
-          const lines = [];
-          lines.push(
-            `Signed in as ${currentUser.value.name} (${currentUser.value.role})`
-          );
-          lines.push(`Status: ${currentUser.value.status}`);
-          lines.push(`Email: ${currentUser.value.email}`);
-          lines.push(`My open tasks: ${myOpenTasksCount.value}`);
-          lines.push(`My completed tasks: ${myCompletedTasksCount.value}`);
-          const filterParts = buildFilterSummary();
-          lines.push(
-            `Filters active: ${
-              filterParts.length ? filterParts.join(", ") : "none"
-            }`
-          );
-          return lines.join("\n");
-        });
-
-        const boardSummaryContextText = computed(() => {
-          const lines = [];
-          lines.push("Kanban board summary");
-          const filterParts = buildFilterSummary();
-          lines.push(
-            `Active filters: ${
-              filterParts.length ? filterParts.join(", ") : "none"
-            }`
-          );
-          lines.push(`Total logged time: ${formatMinutes(totalTimeLogged.value)}`);
-          lines.push(`Tasks on board: ${tasks.value.length}`);
-          lines.push(`Visible tasks after filters: ${filteredTasks.value.length}`);
-          return lines.join("\n");
-        });
 
         watch(activeModalTaskId, (taskId) => {
           document.body.classList.toggle("modal-open", Boolean(taskId));
@@ -616,18 +478,27 @@
           dragOverColumnId.value = null;
         };
 
+        const setHoveredColumn = (id) => {
+          boardStore.setHoveredColumn(id);
+        };
+
         const handleColumnDragOver = (columnId) => {
-          if (!draggedTaskIds.value.length) return;
           dragOverColumnId.value = columnId;
+          setHoveredColumn(columnId);
         };
 
         const handleColumnDragLeave = (columnId, event) => {
-          if (!draggedTaskIds.value.length) return;
           const current = event?.currentTarget;
           const related = event?.relatedTarget;
           if (current && related && current.contains(related)) return;
           if (dragOverColumnId.value === columnId) {
             dragOverColumnId.value = null;
+          }
+          if (
+            !draggedTaskIds.value.length &&
+            columnHoverId.value === columnId
+          ) {
+            setHoveredColumn(null);
           }
         };
 
@@ -644,6 +515,7 @@
           });
           draggedTaskIds.value = [];
           dragOverColumnId.value = null;
+          setHoveredColumn(null);
         };
 
         const addTimeEntryFromModal = ({ minutes, note = "" }) => {
@@ -685,6 +557,229 @@
             showOnlyMine: showOnlyMine.value,
           },
         });
+
+        const getToolDetail = (event) => (event && event.detail) || {};
+
+        // Profile tools
+        const handleToolOpenProfile = (event) => {
+          try {
+            openProfilePanel();
+          } catch (err) {
+            console.error('VOIX tool "open_profile_panel" failed', err);
+          }
+        };
+
+        const handleToolCloseProfile = (event) => {
+          try {
+            closeProfilePanel();
+          } catch (err) {
+            console.error('VOIX tool "close_profile_panel" failed', err);
+          }
+        };
+
+        const handleToolUpdateProfile = (event) => {
+          try {
+            const detail = getToolDetail(event);
+            updateProfile(detail || {});
+          } catch (err) {
+            console.error('VOIX tool "update_profile" failed', err);
+          }
+        };
+
+        // Filter tools
+        const handleToolSetFilters = (event) => {
+          try {
+            const detail = getToolDetail(event);
+            setFiltersFromTool({
+              searchQuery: detail.searchQuery,
+              assigneeId: detail.assigneeId,
+              showOnlyMine: detail.showOnlyMine,
+            });
+          } catch (err) {
+            console.error('VOIX tool "set_filters" failed', err);
+          }
+        };
+
+        const handleToolClearFilters = (event) => {
+          try {
+            clearFilters();
+          } catch (err) {
+            console.error('VOIX tool "clear_filters" failed', err);
+          }
+        };
+
+        // Column tools
+        const handleToolAddColumn = (event) => {
+          try {
+            const detail = getToolDetail(event);
+            const id = addColumn(detail || {});
+            if (id) {
+              event?.target?.dispatchEvent(
+                new CustomEvent("return", { detail: { id } })
+              );
+            }
+          } catch (err) {
+            console.error('VOIX tool "add_column" failed', err);
+          }
+        };
+
+        const handleToolRenameColumn = (event) => {
+          try {
+            const detail = getToolDetail(event);
+            const { id, title } = detail;
+            if (!id || typeof title !== "string") return;
+            renameColumn(id, title);
+          } catch (err) {
+            console.error('VOIX tool "rename_column" failed', err);
+          }
+        };
+
+        const handleToolRemoveColumn = (event) => {
+          try {
+            const detail = getToolDetail(event);
+            const { id } = detail;
+            if (!id) return;
+            removeColumn(id);
+          } catch (err) {
+            console.error('VOIX tool "remove_column" failed', err);
+          }
+        };
+
+        const handleToolReorderColumn = (event) => {
+          try {
+            const detail = getToolDetail(event);
+            const { id, position } = detail;
+            if (!id || typeof position !== "number") return;
+            reorderColumn(id, position);
+          } catch (err) {
+            console.error('VOIX tool "reorder_column" failed', err);
+          }
+        };
+
+        const handleToolSetColumnColor = (event) => {
+          try {
+            const detail = getToolDetail(event);
+            const { id, color } = detail;
+            if (!id || !color) return;
+            setColumnColor({ id, color });
+          } catch (err) {
+            console.error('VOIX tool "set_column_color" failed', err);
+          }
+        };
+
+        // Board tools
+        const handleToolGetBoardState = (event) => {
+          try {
+            if (event?.target) {
+              event.target.dispatchEvent(
+                new CustomEvent("return", { detail: exportBoardState() })
+              );
+            }
+          } catch (err) {
+            console.error('VOIX tool "get_board_state" failed', err);
+          }
+        };
+
+        // Task tools
+        const handleToolCreateTask = (event) => {
+          try {
+            const detail = getToolDetail(event);
+            const { title, description = "", columnId, assigneeId } = detail;
+            if (!title) return;
+            createTask({ title, description, columnId, assigneeId });
+          } catch (err) {
+            console.error('VOIX tool "create_task" failed', err);
+          }
+        };
+
+        const handleToolUpdateTask = (event) => {
+          try {
+            const detail = getToolDetail(event);
+            const { id, title, description, columnId, assigneeId } = detail;
+            if (!id) return;
+            updateTask({ id, title, description, columnId, assigneeId });
+          } catch (err) {
+            console.error('VOIX tool "update_task" failed', err);
+          }
+        };
+
+        const handleToolMoveTask = (event) => {
+          try {
+            const detail = getToolDetail(event);
+            const { id, toColumnId, position } = detail;
+            if (!id || !toColumnId) return;
+            moveTask({ id, toColumnId, position });
+          } catch (err) {
+            console.error('VOIX tool "move_task" failed', err);
+          }
+        };
+
+        const handleToolDeleteTask = (event) => {
+          try {
+            const detail = getToolDetail(event);
+            const { id } = detail;
+            if (!id) return;
+            deleteTask({ id });
+          } catch (err) {
+            console.error('VOIX tool "delete_task" failed', err);
+          }
+        };
+
+        const handleToolOpenTaskModal = (event) => {
+          try {
+            const detail = getToolDetail(event);
+            const { id } = detail;
+            if (!id) return;
+            openTaskModal(id);
+          } catch (err) {
+            console.error('VOIX tool "open_task_modal" failed', err);
+          }
+        };
+
+        const handleToolAddTimeEntry = (event) => {
+          try {
+            const detail = getToolDetail(event);
+            const { taskId, minutes, note = "" } = detail;
+            if (!taskId || typeof minutes === "undefined") return;
+            addTimeEntryForTask(taskId, minutes, note);
+          } catch (err) {
+            console.error('VOIX tool "add_time_entry" failed', err);
+          }
+        };
+
+        const handleToolAddComment = (event) => {
+          try {
+            const detail = getToolDetail(event);
+            const { taskId, text } = detail;
+            if (!taskId || !text) return;
+            addCommentForTask(taskId, text);
+          } catch (err) {
+            console.error('VOIX tool "add_comment" failed', err);
+          }
+        };
+
+        const handleToolAssignTask = (event) => {
+          try {
+            const detail = getToolDetail(event);
+            const id = detail.id || detail.taskId;
+            const assigneeId = detail.assigneeId;
+            if (!id) return;
+            assignTaskToMember({ id, assigneeId });
+          } catch (err) {
+            console.error('VOIX tool "assign_task" failed', err);
+          }
+        };
+
+        const handleToolUnassignTask = (event) => {
+          try {
+            const detail = getToolDetail(event);
+            const { id } = detail;
+            if (!id) return;
+            clearTaskAssignee({ id });
+          } catch (err) {
+            console.error('VOIX tool "unassign_task" failed', err);
+          }
+        };
 
         const handleSelectionChange = () => {
           const sel = document.getSelection ? document.getSelection() : null;
@@ -758,6 +853,7 @@
           addCommentFromModal,
           deleteTaskFromModal,
           setAssigneeFromModal,
+          updateTask,
           teammates,
           currentUser,
           currentUserInitials,
@@ -768,8 +864,6 @@
           columnEditorOpen,
           hasActiveFilters,
           clearFilters,
-          setFiltersFromTool,
-          clearFiltersFromTool,
           filteredTasksCount,
           myOpenTasksCount,
           myCompletedTasksCount,
@@ -779,12 +873,10 @@
           profileStats,
           myTasksPreview,
           filterSummaryList,
-          taskContextEntries,
-          columnsContextText,
-          assignmentsContextText,
-          interactionContextText,
-          profileContextText,
-          boardSummaryContextText,
+          hoveredTaskId,
+          columnHoverId,
+          textSelectionActive,
+          selectedTextContent,
           assignTaskToMember,
           clearTaskAssignee,
           addColumn,
@@ -793,11 +885,16 @@
           reorderColumn,
           setColumnColor,
           updateColumnColor,
-          addColumnInteractive,
+          addColumnFromEditor,
+          newColumnTitle,
+          newColumnColor,
           toggleColumnEditor,
+          columnDragState,
           onColumnDragStart,
           onColumnDragEnd,
           onColumnDrop,
+          onColumnDragHover,
+          onColumnDragLeaveEditor,
           contextMenu,
           openContextMenu,
           closeContextMenu,
@@ -811,17 +908,32 @@
           updateProfileFromPanel,
           openProfilePanel,
           closeProfilePanel,
-          createTask,
-          updateTask,
-          moveTask,
-          deleteTask,
-          addTimeEntryForTask,
-          addCommentForTask,
           exportBoardState,
           selectedTaskIds,
           setSelection,
           toggleTaskSelection,
           selectRangeTo,
+          handleToolOpenProfile,
+          handleToolCloseProfile,
+          handleToolUpdateProfile,
+          handleToolSetFilters,
+          handleToolClearFilters,
+          handleToolAddColumn,
+          handleToolRenameColumn,
+          handleToolRemoveColumn,
+          handleToolReorderColumn,
+          handleToolSetColumnColor,
+          handleToolGetBoardState,
+          handleToolCreateTask,
+          handleToolUpdateTask,
+          handleToolMoveTask,
+          handleToolDeleteTask,
+          handleToolOpenTaskModal,
+          handleToolAddTimeEntry,
+          handleToolAddComment,
+          handleToolAssignTask,
+          handleToolUnassignTask,
+          setHoveredColumn,
         };
       },
     });
