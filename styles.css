@@ -61,19 +61,13 @@
       color: #1e1b4b;
     }
 
-    .hero__title span.logo {
-      width: 30px;
-      height: 30px;
+    .hero__title .logo {
+      width: 36px;
+      height: 36px;
       border-radius: 10px;
-      background: linear-gradient(135deg, #0f172a, #4338ca);
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      color: #f8fafc;
-      font-weight: 700;
-      font-size: 0.95rem;
-      letter-spacing: 0.08em;
-      border: 1px solid rgba(255, 255, 255, 0.2);
+      object-fit: cover;
+      background: #fff;
+      display: inline-block;
     }
 
     .hero__subtitle {
