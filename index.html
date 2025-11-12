@@ -258,8 +258,8 @@
         id="kanban-interaction-context"
         v-if="hoveredTaskId || dragOverColumnId || columnHoverId || selectedTaskIds.length || activeModalTask || textSelectionActive"
       >
-        Interaction state. When the user gives deictic prompts like "this task",
-        use the hover/selection/modal info below{{ "\n" }}
+        Interaction state. When the user gives deictic prompts like "this", "here", "there",
+        use the info below to figure out what task/column they mean{{ "\n" }}
         <template v-if="hoveredTaskId">
           The user is hovering over task: {{ hoveredTaskId + "\n"}}
         </template>
